@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Activity, Award, CheckSquare, Dumbbell, Cpu, TrendingUp, 
-  ArrowUpRight, RefreshCw, AlertCircle, ShieldCheck
+  ArrowUpRight, RefreshCw, AlertCircle, ShieldCheck, Lock, Rocket, Clock
 } from 'lucide-react';
 import { LS_KEYS, SEED_DATA } from '../constants';
 
@@ -210,9 +210,95 @@ export default function DashboardPage({
     }
   }, [todayStr]);
 
-  // Quick mark habit complete today
-  const handleMarkHabitComplete = (habitId) => {
-    setHabitLogs([...habitLogs, { habitId, date: todayStr, completed: true }]);
+  // Load daily skill tasks
+  const [dailyTasks, setDailyTasks] = useState(() => {
+    try {
+      const raw = localStorage.getItem(LS_KEYS.DAILY_SKILL_TASKS || 'tracker_daily_skill_tasks');
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Keep daily tasks in sync with other pages
+  useEffect(() => {
+    const handleStorageChange = () => {
+      try {
+        const raw = localStorage.getItem(LS_KEYS.DAILY_SKILL_TASKS || 'tracker_daily_skill_tasks');
+        setDailyTasks(raw ? JSON.parse(raw) : []);
+      } catch (e) {
+        console.error(e);
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('tracker-expiry-updated', handleStorageChange);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('tracker-expiry-updated', handleStorageChange);
+    };
+  }, []);
+
+  const todayTasks = useMemo(() => {
+    return dailyTasks.filter(t => t.date === todayStr);
+  }, [dailyTasks, todayStr]);
+
+  // Toggle daily task complete
+  const handleToggleTask = (taskId) => {
+    const taskIndex = dailyTasks.findIndex(t => t.id === taskId);
+    if (taskIndex === -1) return;
+    
+    const task = dailyTasks[taskIndex];
+    if (task.completed) return; // Only allow completing it
+
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    const newTasks = [...dailyTasks];
+    newTasks[taskIndex] = { ...task, completed: true, completedAt: `${hh}:${mm}` };
+    setDailyTasks(newTasks);
+    localStorage.setItem(LS_KEYS.DAILY_SKILL_TASKS || 'tracker_daily_skill_tasks', JSON.stringify(newTasks));
+
+    // Notify other components
+    window.dispatchEvent(new Event('tracker-expiry-updated'));
+
+    // Handle compulsory task bonus
+    if ((task.task || task.skillName) === 'PRAYER' || task.mandatory) {
+      const currentBonus = parseInt(localStorage.getItem('tracker_total_xp_bonus') || '0', 10);
+      localStorage.setItem('tracker_total_xp_bonus', String(currentBonus + 10));
+      return;
+    }
+    
+    // Increment skill progress
+    if (skills && setSkills) {
+      let updatedSkills = [...skills];
+      const skillIndex = updatedSkills.findIndex(s => s.id === task.skillId);
+      if (skillIndex > -1) {
+        let skill = { ...updatedSkills[skillIndex] };
+        let newProgress = (skill.progress || 0) + 10;
+        if (newProgress >= 100) {
+          newProgress = 100;
+          skill.status = 'complete';
+          alert(`CRITICAL SUCCESS: SKILL [${skill.name}] INTEGRATED TO 100%`);
+        }
+        skill.progress = newProgress;
+        updatedSkills[skillIndex] = skill;
+        setSkills(updatedSkills);
+      }
+    }
+  };
+
+  // Toggle habit check-in for today
+  const handleToggleHabitComplete = (habitId) => {
+    const isCompleted = habitLogs.some(log => log.habitId === habitId && log.date === todayStr && (log.completed === true || log.completed === undefined));
+    if (isCompleted) {
+      const newLogs = habitLogs.filter(log => !(log.habitId === habitId && log.date === todayStr));
+      setHabitLogs(newLogs);
+    } else {
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2, '0');
+      const mm = String(now.getMinutes()).padStart(2, '0');
+      setHabitLogs([...habitLogs, { habitId, date: todayStr, completed: true, completedAt: `${hh}:${mm}` }]);
+    }
   };
 
   return (
@@ -461,13 +547,15 @@ export default function DashboardPage({
               TODAY'S SOMATIC & COGNITIVE FOCUS LOOP
             </h3>
 
-            <div style={{ marginBottom: '16px', paddingBottom: '12px', borderBottom: '1px dashed var(--border-dim)' }}>
+            {/* Somatic Workout Info Block */}
+            <div style={{ marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px dashed var(--border-dim)' }}>
+              <div className="mono" style={{ fontSize: '10px', color: 'var(--text-dim)', marginBottom: '8px', letterSpacing: '1px' }}>SOMATIC PROTOCOL</div>
               {dailyTraining ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <div>
                     <span style={{
                       display: 'inline-block',
-                      padding: '4px 10px',
+                      padding: '4px 12px',
                       borderRadius: '999px',
                       border: dailyTraining.type === 'REST' ? '1px solid #ffb300' : '1px solid var(--neon-cyan)',
                       color: dailyTraining.type === 'REST' ? '#ffb300' : 'var(--neon-cyan)',
@@ -495,85 +583,240 @@ export default function DashboardPage({
                       ))}
                     </div>
                   )}
+                  {dailyTraining.note && (
+                    <div className="mono" style={{ fontSize: '11px', color: 'var(--text-dim)', fontStyle: 'italic', marginTop: '2px' }}>
+                      &gt; {dailyTraining.note}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="mono" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                  NO PROTOCOL SET — RUN DAILY BOOT
+                  NO PHYSICAL CALIBRATION REGISTERED TODAY — INITIATE SYSTEM BOOT
                 </div>
               )}
             </div>
 
-            {incompleteTodayHabits.length > 0 ? (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                {[...expiredTodayHabits, ...incompleteTodayHabits.filter(h => !expiredTodayHabits.some(e => e.id === h.id))].map((h) => {
-                  const colorVal = h.color || '--neon-cyan';
-                  const habitColor = colorVal.startsWith('--') ? `var(${colorVal})` : colorVal;
-                  const missed = expiredTodayHabits.some(e => e.id === h.id);
-                  return (
-                    <button
-                      key={h.id}
-                      onClick={() => !missed && handleMarkHabitComplete(h.id)}
-                      className="cyber-button"
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        borderColor: missed ? 'rgba(255,36,66,0.5)' : habitColor,
-                        color: missed ? 'var(--text-secondary)' : habitColor,
-                        padding: '8px 16px',
-                        fontSize: '12px',
-                        borderRadius: '20px',
-                        textDecoration: missed ? 'line-through' : 'none',
-                        boxShadow: `0 0 4px rgba(255, 255, 255, 0.02)`,
-                        transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
-                        fontFamily: 'Share Tech Mono, monospace',
-                        cursor: missed ? 'default' : 'pointer',
-                        backgroundColor: missed ? 'rgba(255,36,66,0.04)' : 'transparent'
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.backgroundColor = habitColor;
-                        e.currentTarget.style.color = '#000000';
-                        e.currentTarget.style.boxShadow = `0 0 10px ${habitColor}`;
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.backgroundColor = 'transparent';
-                        e.currentTarget.style.color = habitColor;
-                        e.currentTarget.style.boxShadow = `0 0 4px rgba(255, 255, 255, 0.02)`;
-                      }}
-                    >
-                      {missed ? (
-                        <span className="mono" style={{ fontSize: '10px', color: '#ef4444', border: '1px solid rgba(239,68,68,0.6)', borderRadius: '999px', padding: '2px 6px' }}>MISSED</span>
-                      ) : (
-                        <span>[ ]</span>
-                      )}
-                      <span>{h.icon}</span>
-                      <span>{h.name.toUpperCase()}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            ) : (
-              <div style={{ 
-                display: 'flex', 
-                flexDirection: 'column', 
-                alignItems: 'center', 
-                justifyContent: 'center', 
-                padding: '24px', 
-                border: '1px dashed var(--neon-green)',
-                borderRadius: '6px',
-                backgroundColor: 'rgba(0, 230, 118, 0.02)',
-                color: 'var(--neon-green)',
-                fontFamily: 'Orbitron, sans-serif'
-              }}>
-                <ShieldCheck size={28} className="animate-pulse-cyber" style={{ marginBottom: '8px' }} />
-                <h4 style={{ fontSize: '16px', fontWeight: 'bold', letterSpacing: '2px', textShadow: '0 0 10px var(--neon-green)' }}>
-                  ALL SYSTEMS NOMINAL
-                </h4>
-                <span className="mono" style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px', letterSpacing: '1px', fontFamily: 'Share Tech Mono, monospace' }}>
-                  ALL SOMATIC PROTOCOLS LOCKED FOR TODAY CYCLE.
-                </span>
-              </div>
-            )}
+            {/* Cognitive Directives & Habits Checklist */}
+            {(() => {
+              const hasIncompleteTasks = todayTasks.some(t => !t.completed && t.status !== 'expired' && !t.expired);
+              const hasIncompleteHabits = incompleteTodayHabits.length > 0;
+              const hasAnyTasks = todayTasks.length > 0 || habits.length > 0;
+
+              if (!hasAnyTasks) {
+                return (
+                  <div className="mono" style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>
+                    NO OPERATIONS DEFINED IN MEMORY GRID.
+                  </div>
+                );
+              }
+
+              if (!hasIncompleteTasks && !hasIncompleteHabits) {
+                return (
+                  <div style={{ 
+                    display: 'flex', 
+                    flexDirection: 'column', 
+                    alignItems: 'center', 
+                    justifyContent: 'center', 
+                    padding: '24px', 
+                    border: '1px dashed var(--neon-green)',
+                    borderRadius: '6px',
+                    backgroundColor: 'rgba(0, 230, 118, 0.02)',
+                    color: 'var(--neon-green)',
+                    fontFamily: 'Orbitron, sans-serif'
+                  }}>
+                    <ShieldCheck size={28} className="animate-pulse-cyber" style={{ marginBottom: '8px' }} />
+                    <h4 style={{ fontSize: '16px', fontWeight: 'bold', letterSpacing: '2px', textShadow: '0 0 10px var(--neon-green)' }}>
+                      ALL SYSTEMS NOMINAL
+                    </h4>
+                    <span className="mono" style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px', letterSpacing: '1px', fontFamily: 'Share Tech Mono, monospace' }}>
+                      ALL DIRECTIVES & ROUTINES COMPLETED FOR THE ACTIVE CYCLE.
+                    </span>
+                  </div>
+                );
+              }
+
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                  
+                  {/* Part A: Daily Skill Missions (Active chosen tasks) */}
+                  <div>
+                    <div className="mono" style={{ fontSize: '10px', color: 'var(--text-dim)', marginBottom: '8px', letterSpacing: '1px' }}>ACTIVE COGNITIVE DIRECTIVES</div>
+                    {todayTasks.length > 0 ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {todayTasks.map((t) => {
+                          const isPrayer = t.mandatory || t.task === 'PRAYER' || t.skillName === 'PRAYER';
+                          const isExpired = t.status === 'expired' || t.expired;
+                          const accentColor = isExpired ? '#ef4444' : isPrayer ? '#ffb300' : 'var(--neon-magenta)';
+                          
+                          return (
+                            <div 
+                              key={t.id}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                padding: '10px 14px',
+                                borderRadius: '6px',
+                                border: `1px solid ${t.completed ? 'rgba(0, 230, 118, 0.25)' : 'var(--border-dim)'}`,
+                                background: t.completed ? 'rgba(0, 230, 118, 0.02)' : isExpired ? 'rgba(255, 36, 66, 0.03)' : 'rgba(255,255,255,0.01)',
+                                transition: 'all 0.2s ease',
+                                opacity: t.completed ? 0.65 : 1
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <span style={{ color: accentColor, display: 'flex', alignItems: 'center' }}>
+                                  {isPrayer ? <Lock size={14} /> : <Rocket size={14} />}
+                                </span>
+                                <div>
+                                  <div style={{ 
+                                    fontSize: '13px', 
+                                    color: t.completed ? 'var(--text-secondary)' : 'var(--text-primary)',
+                                    textDecoration: t.completed ? 'line-through' : 'none',
+                                    fontWeight: 'bold',
+                                    fontFamily: 'Share Tech Mono, monospace'
+                                  }}>
+                                    {t.skillName.toUpperCase()}
+                                  </div>
+                                  <div className="mono" style={{ fontSize: '9px', color: 'var(--text-dim)' }}>
+                                    {t.category.toUpperCase()} {t.deadlineTime && `| DEADLINE: ${t.deadlineTime}`}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <span className="mono" style={{ fontSize: '10px', color: accentColor, padding: '1px 6px', borderRadius: '3px', background: 'rgba(255,255,255,0.03)' }}>
+                                  +{t.xpReward} XP
+                                </span>
+                                {isPrayer && !t.completed && (
+                                  <span className="mono" style={{ fontSize: '8px', color: '#ffb300', border: '1px solid rgba(255,179,0,0.5)', borderRadius: '3px', padding: '1px 4px' }}>
+                                    MANDATORY
+                                  </span>
+                                )}
+                                
+                                <button
+                                  onClick={() => !isExpired && handleToggleTask(t.id)}
+                                  disabled={t.completed || isExpired}
+                                  style={{
+                                    width: '24px',
+                                    height: '24px',
+                                    borderRadius: '50%',
+                                    border: `2px solid ${t.completed ? 'var(--neon-green)' : accentColor}`,
+                                    background: t.completed ? 'var(--neon-green)' : 'transparent',
+                                    cursor: (t.completed || isExpired) ? 'default' : 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    transition: 'all 0.2s',
+                                    boxShadow: t.completed ? '0 0 6px var(--neon-green)' : 'none'
+                                  }}
+                                >
+                                  {isExpired ? (
+                                    <span style={{ fontSize: '8px', color: '#ef4444', fontWeight: 'bold' }}>!</span>
+                                  ) : t.completed ? (
+                                    <span style={{ width: '8px', height: '8px', backgroundColor: '#000', borderRadius: '50%' }} />
+                                  ) : (
+                                    <span style={{ width: '6px', height: '6px', backgroundColor: accentColor, borderRadius: '50%' }} />
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="mono" style={{ fontSize: '11px', color: 'var(--text-secondary)', padding: '10px', border: '1px dashed var(--border-dim)', borderRadius: '6px', textAlign: 'center' }}>
+                        NO ACTIVE DIRECTIVES PLANNED FOR TODAY CYCLE.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Part B: General Habits */}
+                  <div>
+                    <div className="mono" style={{ fontSize: '10px', color: 'var(--text-dim)', marginBottom: '8px', letterSpacing: '1px' }}>ROUTINE SYNAPSES</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {habits.map((h) => {
+                        const todayLog = habitLogs.find(log => log.habitId === h.id && log.date === todayStr);
+                        const isCompletedToday = !!todayLog && (todayLog.completed === true || (todayLog.completed === undefined && todayLog.status !== 'expired' && !todayLog.expired));
+                        const isExpiredToday = !!todayLog && (todayLog.status === 'expired' || todayLog.expired);
+                        
+                        const colorVal = h.color || '--neon-cyan';
+                        const habitColor = colorVal.startsWith('--') ? `var(${colorVal})` : colorVal;
+                        
+                        return (
+                          <div 
+                            key={h.id}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              padding: '10px 14px',
+                              borderRadius: '6px',
+                              border: `1px solid ${isCompletedToday ? 'rgba(0, 230, 118, 0.25)' : 'var(--border-dim)'}`,
+                              background: isCompletedToday ? 'rgba(0, 230, 118, 0.02)' : isExpiredToday ? 'rgba(255, 36, 66, 0.03)' : 'rgba(255,255,255,0.01)',
+                              transition: 'all 0.2s ease',
+                              opacity: isCompletedToday ? 0.65 : 1
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              <span style={{ fontSize: '14px' }}>{h.icon || '🔥'}</span>
+                              <div>
+                                <div style={{ 
+                                  fontSize: '13px', 
+                                  color: isCompletedToday ? 'var(--text-secondary)' : 'var(--text-primary)',
+                                  textDecoration: isCompletedToday ? 'line-through' : 'none',
+                                  fontWeight: 'bold',
+                                  fontFamily: 'Share Tech Mono, monospace'
+                                }}>
+                                  {h.name.toUpperCase()}
+                                </div>
+                                <div className="mono" style={{ fontSize: '9px', color: 'var(--text-dim)' }}>
+                                  ROUTINE | TARGET: {h.target || h.frequency || 'DAILY'}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                              {isExpiredToday && (
+                                <span className="mono" style={{ fontSize: '9px', color: '#ef4444', border: '1px solid rgba(239,68,68,0.5)', borderRadius: '3px', padding: '1px 4px' }}>
+                                  MISSED
+                                </span>
+                              )}
+                              
+                              <button
+                                onClick={() => !isExpiredToday && handleToggleHabitComplete(h.id)}
+                                disabled={isExpiredToday}
+                                style={{
+                                  width: '24px',
+                                  height: '24px',
+                                  borderRadius: '50%',
+                                  border: `2px solid ${isCompletedToday ? 'var(--neon-green)' : habitColor}`,
+                                  background: isCompletedToday ? 'var(--neon-green)' : 'transparent',
+                                  cursor: isExpiredToday ? 'default' : 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  transition: 'all 0.2s',
+                                  boxShadow: isCompletedToday ? '0 0 6px var(--neon-green)' : 'none'
+                                }}
+                              >
+                                {isExpiredToday ? (
+                                  <span style={{ fontSize: '8px', color: '#ef4444', fontWeight: 'bold' }}>!</span>
+                                ) : isCompletedToday ? (
+                                  <span style={{ width: '8px', height: '8px', backgroundColor: '#000', borderRadius: '50%' }} />
+                                ) : (
+                                  <span style={{ width: '6px', height: '6px', backgroundColor: habitColor, borderRadius: '50%' }} />
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                </div>
+              );
+            })()}
           </div>
         </>
       )}

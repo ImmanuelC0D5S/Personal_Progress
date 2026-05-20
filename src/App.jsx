@@ -474,6 +474,9 @@ function App() {
               <SkillsPage 
                 skills={skills} 
                 setSkills={setSkills} 
+                workouts={workouts}
+                habits={habits}
+                habitLogs={habitLogs}
               />
             } 
           />
